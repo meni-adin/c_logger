@@ -1,6 +1,13 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif // __cplusplus
+
+
 typedef enum LoggingLevel_t
 {
     LOG_LVL_TRACE,
@@ -17,5 +24,9 @@ logger_init(void);
 
 void
 logger_log(LoggingLevel_t, const char *format, ...);
+
+#ifdef __cplusplus
+}
+#endif // __cplusplus
 
 #endif // LOGGER_H
