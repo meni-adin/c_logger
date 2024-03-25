@@ -9,6 +9,7 @@ add_executable(${EXEC_NAME}
 target_link_libraries(${EXEC_NAME}
     GTest::gmock
     logger
+    output_redirection
 )
 
 include(GoogleTest)
