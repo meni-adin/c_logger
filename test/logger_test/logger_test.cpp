@@ -2,8 +2,15 @@
 #include "logger.h"
 #include <stdio.h>
 
-#include <fcntl.h>
-#include <unistd.h>
+#if defined(__linux__) || defined(__APPLE__)
+ #include <fcntl.h>
+ #include <unistd.h>
+#elif defined(_WIN32)
+ #include <io.h>
+ #define dup _dup
+ #define dup2 _dup2
+ #define fileno _fileno
+#endif // OS
 
 #include <fstream>
 
@@ -40,14 +47,21 @@ public:
 
             stdoutTempFile = fopen(stdoutTempFileName.c_str(), creatingTempFileMode.c_str());
             stderrTempFile = fopen(stderrTempFileName.c_str(), creatingTempFileMode.c_str());
+
+            stdoutFD = fileno(stdoutTempFile);
+            stderrFD = fileno(stderrTempFile);
         }
         else
         {
             stdoutAndStderrTempFileName = tempFilePrefix + tempFileSep + "stdoutAndStderr" + tempFileSep + tempFileExtension;
             stdoutAndStderrTempFile = fopen(stdoutAndStderrTempFileName.c_str(), creatingTempFileMode.c_str());
+            stdoutAndStderrFD = fileno(stdoutAndStderrTempFile);
         }
         if (!temp_files_are_open()) // TODO: add print from errno
             throw runtime_error("Can't open temp files");
+
+        stdoutFDBackup = dup(1);
+        stderrFDBackup = dup(2);
     }
 
     ~OutputRedirection()
@@ -80,24 +94,16 @@ public:
     {
         fflush(stdout);
         fflush(stderr);
-        stdoutFDBackup = dup(1);
-        stderrFDBackup = dup(2);
 
         if (separateStderr)
         {
-            stdoutFD = fileno(stdoutTempFile);
-            stderrFD = fileno(stderrTempFile);
             dup2(stdoutFD, 1);
             dup2(stderrFD, 2);
-            close(stdoutFD);
-            close(stderrFD);
         }
         else
         {
-            stdoutAndStderrFD = fileno(stdoutAndStderrTempFile);
             dup2(stdoutAndStderrFD, 1);
             dup2(stdoutAndStderrFD, 2);
-            close(stdoutAndStderrFD);
         }
     }
 
