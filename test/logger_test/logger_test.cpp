@@ -17,7 +17,6 @@
 using namespace std;
 using namespace testing;
 
-
 class OutputRedirection
 {
 public:
@@ -25,115 +24,168 @@ public:
     static inline const string tempFileExtension = ".log";
 
 private:
-    bool separateStderr, keepTempFiles;
-
+    bool separateStderr, keepTempFiles, redirectionIsActive;
     string tempFilePrefix;
 
-    int stdoutFDBackup, stderrFDBackup;
-    int stdoutFD, stderrFD, stdoutAndStderrFD;
-    string stdoutTempFileName, stderrTempFileName, stdoutAndStderrTempFileName;
-    FILE *stdoutTempFile, *stderrTempFile, *stdoutAndStderrTempFile;
-    static inline const string creatingTempFileMode{"w"};
-    static constexpr ios_base::openmode readingTempFileMode = ios::in;
+    vector<string> tempFilesNames;
+    vector<FILE*> tempFiles;
+    vector<int> tempFilesFDs;
+    vector<int> originalFDsBackups;
+    static inline const vector<int> originalFDs{1, 2};
+    static inline const vector<string> standardFilesNames{"stdout", "stderr"};
 
 public:
     OutputRedirection(const string tempFilePrefix, bool separateStderr=false, bool keepTempFiles=false) :
-        tempFilePrefix{tempFilePrefix}, separateStderr{separateStderr}, keepTempFiles{keepTempFiles}
+        tempFilePrefix{tempFilePrefix},
+        separateStderr{separateStderr},
+        keepTempFiles{keepTempFiles},
+        redirectionIsActive(false)
     {
         if (separateStderr)
         {
-            stdoutTempFileName = tempFilePrefix + tempFileSep + "stdout" + tempFileExtension;
-            stderrTempFileName = tempFilePrefix + tempFileSep + "stderr" + tempFileExtension;
-
-            stdoutTempFile = fopen(stdoutTempFileName.c_str(), creatingTempFileMode.c_str());
-            stderrTempFile = fopen(stderrTempFileName.c_str(), creatingTempFileMode.c_str());
-
-            stdoutFD = fileno(stdoutTempFile);
-            stderrFD = fileno(stderrTempFile);
+            // Note: order of insertion matters
+            tempFilesNames.push_back(tempFilePrefix + tempFileSep + "stdout" + tempFileExtension);
+            tempFilesNames.push_back(tempFilePrefix + tempFileSep + "stderr" + tempFileExtension);
         }
         else
         {
-            stdoutAndStderrTempFileName = tempFilePrefix + tempFileSep + "stdoutAndStderr" + tempFileSep + tempFileExtension;
-            stdoutAndStderrTempFile = fopen(stdoutAndStderrTempFileName.c_str(), creatingTempFileMode.c_str());
-            stdoutAndStderrFD = fileno(stdoutAndStderrTempFile);
+            tempFilesNames.push_back(tempFilePrefix + tempFileSep + "stdoutAndStderr" + tempFileExtension);
         }
-        if (!temp_files_are_open()) // TODO: add print from errno
-            throw runtime_error("Can't open temp files");
 
-        stdoutFDBackup = dup(1);
-        stderrFDBackup = dup(2);
+        for (auto tempFileName : tempFilesNames)
+        {
+            FILE *tempFile = fopen(tempFileName.c_str(), "w");
+            if (!tempFile)
+                perror_and_exit("Failed to open "s + tempFileName + " for writing"s);
+            tempFiles.push_back(tempFile);
+
+            int tempFD = fileno(tempFile);
+            if (tempFD == -1)
+                perror_and_exit("Failed to get file number of opened file "s + tempFileName);
+            tempFilesFDs.push_back(tempFD);
+        }
+
+        for (int idx = 0; idx < originalFDs.size(); ++idx)
+        {
+            int FDBackup = dup(originalFDs[idx]);
+            if (FDBackup == -1)
+                perror_and_exit("Failed to duplicate FD "s + to_string(originalFDs[idx]));
+            originalFDsBackups.push_back(FDBackup);
+        }
     }
 
     ~OutputRedirection()
     {
-        if (separateStderr)
-        {
-            fclose(stdoutTempFile);
-            fclose(stderrTempFile);
-        }
-        else
-        {
-            fclose(stdoutAndStderrTempFile);
-        }
+        if (redirectionIsActive)
+            stop_redirection();
 
-        if (!keepTempFiles)
+        for (size_t idx = 0; idx < tempFilesNames.size(); ++idx)
         {
-            if(separateStderr)
+            int res;
+            
+            res = fclose(tempFiles[idx]);
+            if (res == EOF)
+                message_and_exit("Failed to close "s + tempFilesNames[idx]);
+
+            res = close(originalFDsBackups[idx]);
+            if (res == EOF)
+                message_and_exit("Failed to close backup FD "s + to_string(originalFDsBackups[idx]));
+
+            if (!keepTempFiles)
             {
-                remove(stdoutTempFileName.c_str());
-                remove(stderrTempFileName.c_str());
-            }
-            else
-            {
-                remove(stdoutAndStderrTempFileName.c_str());
+                res = remove(tempFilesNames[idx].c_str());
+                if (res != 0)
+                    message_and_exit("Failed to remove "s + tempFilesNames[idx]);
             }
         }
     }
 
     void start_redirection()
     {
-        fflush(stdout);
-        fflush(stderr);
+        int res;
 
+        if (redirectionIsActive)
+            return;
+
+        flush_streams();
         if (separateStderr)
         {
-            dup2(stdoutFD, 1);
-            dup2(stderrFD, 2);
+            for (size_t idx = 0; idx < tempFilesNames.size(); ++idx)
+            {
+                res = dup2(tempFilesFDs[idx], originalFDs[idx]);
+                if (res == -1)
+                    perror_and_exit("Failed to redirect "s + standardFilesNames[idx]);
+            }
         }
         else
         {
-            dup2(stdoutAndStderrFD, 1);
-            dup2(stdoutAndStderrFD, 2);
+            for (size_t idx = 0; idx < originalFDs.size(); ++idx)
+            {
+                res = dup2(tempFilesFDs[0], originalFDs[idx]);
+                if (res == -1)
+                    perror_and_exit("Failed to redirect "s + standardFilesNames[idx]);
+            }
         }
+
+        redirectionIsActive = true;
     }
 
     void stop_redirection()
     {
-        fflush(stdout);
-        fflush(stderr);
-        dup2(stdoutFDBackup, 1);
-        dup2(stderrFDBackup, 2);
-        close(stdoutFDBackup);
-        close(stderrFDBackup);
+        int res;
+
+        if (!redirectionIsActive)
+            return;
+
+        flush_streams();
+        for (size_t idx = 0; idx < originalFDs.size(); ++idx)
+        {
+            res = dup2(originalFDsBackups[idx], originalFDs[idx]);
+            if (res == -1)
+                perror_and_exit("Failed to restore "s + standardFilesNames[idx]);
+        }
+
+        redirectionIsActive = false;
     }
 
     void print()
     {
-        if (!separateStderr)
+        if (redirectionIsActive)
+            return;
+        for (auto tempFileName : tempFilesNames)
         {
-            ifstream f(stdoutAndStderrTempFileName);
+            ifstream f(tempFileName);
             if (f.is_open())
                 cout << f.rdbuf();
+            else
+                message_and_exit("Failed to open "s + tempFileName);
         }
     }
 
 private:
-    bool temp_files_are_open() const
+    void flush_streams()
     {
-        if (separateStderr)
-            return stdoutTempFile && stderrTempFile;
-        else
-            return stdoutAndStderrTempFile;
+        int res;
+
+        res = fflush(stdout);
+        if (res == EOF)
+            message_and_exit("Failed to flush stdout");
+
+        res = fflush(stderr);
+        if (res == EOF)
+            message_and_exit("Failed to flush stderr");
+    }
+
+    void perror_and_exit(const string &message)
+    {
+        perror(message.c_str());
+        exit(1);
+    }
+
+    void message_and_exit(const string &message)
+    {
+        cerr << message << endl;
+        exit(1);
     }
 };
 
@@ -175,6 +227,24 @@ TEST_F(LoggerUnitTests, Test2) {
     fprintf(stdout, "worldOut");
     fprintf(stderr, "worldErr");
 }
+
+// TEST_F(LoggerUnitTests, Test3) {
+//     cout << "C++ stdout 01\n";
+//     cerr << "C++ stderr 01\n";
+
+//     outputRedirection.start_redirection();
+//     cout << "C++ stdout file 02\n";
+//     cerr << "C++ stderr file 02\n";
+
+//     outputRedirection.stop_redirection();
+//     cout << "C++ stdout 03\n";
+//     cerr << "C++ stderr 03\n";
+
+//     outputRedirection.start_redirection();
+//     cout << "C++ stdout file 04\n";
+//     cerr << "C++ stderr file 04\n";
+//     FAIL();
+// }
 
 int main(int argc, char *argv[])
 {
