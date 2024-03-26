@@ -18,10 +18,10 @@ extern "C" {
 #endif // __cplusplus
 
 void OutRed_init(const char *tempFilePrefix, bool separateStderr, bool keepTempFiles);
-void OutRed_deinit(void);
-void OutRed_startRedirection(void);
-void OutRed_stopRedirection(void);
-void OutRed_print(void);
+void OutRed_deinit();
+void OutRed_startRedirection();
+void OutRed_stopRedirection();
+void OutRed_printRedirectedData();
 
 #ifdef __cplusplus
 }

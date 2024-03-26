@@ -3,31 +3,60 @@
 #include <stdio.h>
 #include "output_redirection.h"
 
+using namespace ::std;
 using namespace ::testing;
+
+// class LoggerUnitTests : public ::testing::Test
+// {
+// protected:
+
+//     OutputRedirection outputRedirection{string{} +
+//         UnitTest::GetInstance()->current_test_suite()->name() +
+//         OutputRedirection::tempFileSep +
+//         UnitTest::GetInstance()->current_test_info()->name()};
+
+//     virtual void SetUp() override
+//     {
+//         outputRedirection.start_redirection();
+//         logger_init();
+//     }
+
+//     virtual void TearDown() override
+//     {
+//         outputRedirection.stop_redirection();
+
+//         if (UnitTest::GetInstance()->current_test_info()->result()->Failed())
+//         {
+//             outputRedirection.print();
+//         }
+//     }
+// };
 
 class LoggerUnitTests : public ::testing::Test
 {
 protected:
 
-    OutputRedirection outputRedirection{string{} +
-        UnitTest::GetInstance()->current_test_suite()->name() +
-        OutputRedirection::tempFileSep +
-        UnitTest::GetInstance()->current_test_info()->name()};
+    static inline string testNameSep{"_"};
 
     virtual void SetUp() override
     {
-        outputRedirection.start_redirection();
+        string testFullName{string{} +
+            UnitTest::GetInstance()->current_test_suite()->name() +
+            testNameSep +
+            UnitTest::GetInstance()->current_test_info()->name()};
+        OutRed_init(testFullName.c_str(), false, false);
+        OutRed_startRedirection();
         logger_init();
     }
 
     virtual void TearDown() override
     {
-        outputRedirection.stop_redirection();
-
+        OutRed_stopRedirection();
         if (UnitTest::GetInstance()->current_test_info()->result()->Failed())
         {
-            outputRedirection.print();
+            OutRed_printRedirectedData();
         }
+        OutRed_deinit();
     }
 };
 
